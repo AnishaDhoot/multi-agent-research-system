@@ -1,0 +1,44 @@
+# LangChain core
+langchain
+langchain-core
+langchain-community
+langchain-openai
+
+# LCEL / Runnables (included in langchain-core, but pinning for safety)
+langchain-core>=0.1.0
+
+# OpenAI
+openai
+
+# Google Gemini
+langchain-google-genai
+
+# ReAct Agent
+langgraph
+
+# API server
+fastapi
+uvicorn
+
+# Tavily search tool
+tavily-python
+langchain-tavily
+
+# BeautifulSoup for web scraping
+beautifulsoup4
+requests
+lxml
+
+# Environment variable management
+python-dotenv
+
+# Async support
+asyncio
+
+# Optional but useful for structured outputs / pydantic models
+pydantic
+
+# Logging / tracing (LangSmith)
+langsmith
+
+rich
