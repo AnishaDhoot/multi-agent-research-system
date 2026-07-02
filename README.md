@@ -286,10 +286,10 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
 4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
-
+<!-- 
 ## 📝 License
 
-This project is open source and available under the MIT License.
+This project is open source and available under the MIT License. -->
 
 ## 🙏 Acknowledgments
 
@@ -303,7 +303,7 @@ This project is open source and available under the MIT License.
 
 For questions or suggestions, please open an issue on GitHub or contact the maintainers.
 
-## 🗺️ Roadmap
+<!-- ## 🗺️ Roadmap
 
 - [ ] Add more specialized agents (citation manager, fact-checker)
 - [ ] Implement research history and saved reports
@@ -312,8 +312,6 @@ For questions or suggestions, please open an issue on GitHub or contact the main
 - [ ] Advanced filtering and source selection
 - [ ] Collaborative research features
 - [ ] API rate limiting and authentication
-- [ ] Docker containerization for easy deployment
+- [ ] Docker containerization for easy deployment -->
 
----
 
-**Built with ❤️ using modern AI technologies**
