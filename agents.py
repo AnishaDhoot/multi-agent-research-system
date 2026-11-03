@@ -3,12 +3,14 @@ from langchain_core.output_parsers import StrOutputParser
 from langgraph.prebuilt import create_react_agent
 from tools import web_search, scrape_url
 import os
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 load_dotenv()
 
 def get_llm():
     from langchain_google_genai import ChatGoogleGenerativeAI
-    return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+    # The client retries 429/5xx itself (HttpRetryOptions); a timeout stops a hung call blocking a run.
+    return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, max_retries=3, timeout=90)
 
 def build_search_agent():
     llm = get_llm()
@@ -58,32 +60,60 @@ critic_prompt = ChatPromptTemplate.from_messages([
     absence of new experiments or a methodology section. Judge accuracy against its
     citations, depth, clarity, balance, and whether claims are supported.
     Report:
-        {report}
-
-        Respond in this exact format:
-
-        Score: X/10
-
-        Strengths:
-        - ...
-        - ...
-
-        Areas to Improve:
-        - ...
-        - ...
-
-        One line verdict:
-        ..."""),
+        {report}"""),
 ])
 
+
+class CriticReview(BaseModel):
+    score: float = Field(ge=0, le=10, description="Overall quality from 0 to 10")
+    strengths: list[str] = Field(description="Specific strengths")
+    improvements: list[str] = Field(description="Specific, actionable areas to improve")
+    verdict: str = Field(description="One-line verdict")
+
+    def format(self) -> str:
+        """Human-readable feedback, also fed back to the writer on revision."""
+        bullets = lambda items: "\n".join(f"- {i}" for i in items)
+        return (
+            f"Score: {self.score:g}/10\n\nStrengths:\n{bullets(self.strengths)}\n\n"
+            f"Areas to Improve:\n{bullets(self.improvements)}\n\nOne line verdict:\n{self.verdict}"
+        )
+
+
+class ResearchPlan(BaseModel):
+    questions: list[str] = Field(description="3 to 4 distinct, self-contained web search queries")
+
+
+planner_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a research planner. You break a topic into focused web search queries."),
+    ("human", """Break the topic below into 3 to 4 distinct search queries that together give broad,
+    balanced coverage (e.g. fundamentals, current state/recent developments, challenges or criticism,
+    and data/numbers). Each query must make sense on its own and be suitable for a web search engine.
+    Topic: {topic}"""),
+])
+
+
+def plan_topic(topic: str) -> list[str]:
+    """Return sub-questions for the topic. Falls back to the topic itself if planning fails."""
+    try:
+        plan = (planner_prompt | get_llm().with_structured_output(ResearchPlan)).invoke({"topic": topic})
+        questions = [q.strip() for q in plan.questions if q.strip()]
+    except Exception:
+        questions = []
+    return questions[:4] or [topic]
+
+
 class _LazyRunnable:
-    def __init__(self, prompt_template):
+    def __init__(self, prompt_template, schema=None):
         self.prompt_template = prompt_template
+        self.schema = schema
         self._chain = None
 
     def _init_chain(self):
         if self._chain is None:
-            self._chain = self.prompt_template | get_llm() | StrOutputParser()
+            if self.schema:
+                self._chain = self.prompt_template | get_llm().with_structured_output(self.schema)
+            else:
+                self._chain = self.prompt_template | get_llm() | StrOutputParser()
 
     def invoke(self, inputs: dict):
         self._init_chain()
@@ -91,4 +121,4 @@ class _LazyRunnable:
 
 writer_chain = _LazyRunnable(writer_prompt)
 revision_chain = _LazyRunnable(revision_prompt)
-critic_chain = _LazyRunnable(critic_prompt)
+critic_chain = _LazyRunnable(critic_prompt, schema=CriticReview)

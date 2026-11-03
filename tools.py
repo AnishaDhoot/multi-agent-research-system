@@ -1,6 +1,7 @@
 import ipaddress
 import os
 import socket
+import time
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -13,6 +14,7 @@ load_dotenv()
 
 MAX_SCRAPE_CHARS = 3000
 MAX_REDIRECTS = 3
+SEARCH_ATTEMPTS = 3
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -32,7 +34,14 @@ def _get_tavily() -> TavilyClient:
 
 def search_sources(query: str, max_results: int = 5) -> list[dict]:
     """Search the web and return [{title, url, snippet}, ...]."""
-    results = _get_tavily().search(query=query, max_results=max_results)
+    for attempt in range(SEARCH_ATTEMPTS):
+        try:
+            results = _get_tavily().search(query=query, max_results=max_results)
+            break
+        except Exception:
+            if attempt == SEARCH_ATTEMPTS - 1:
+                raise
+            time.sleep(2**attempt)
     return [
         {"title": r.get("title", ""), "url": r["url"], "snippet": r.get("content", "")}
         for r in results.get("results", [])

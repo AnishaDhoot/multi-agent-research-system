@@ -1,9 +1,9 @@
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 # Import the methods to test
-from agents import get_llm, build_search_agent, build_reader_agent, writer_chain, critic_chain
+from agents import CriticReview, ResearchPlan, plan_topic, get_llm, build_search_agent, build_reader_agent, writer_chain, critic_chain
 
 class TestAgents(unittest.TestCase):
     def setUp(self):
@@ -37,6 +37,16 @@ class TestAgents(unittest.TestCase):
         except Exception as e:
             self.fail(f"build_reader_agent() failed with exception: {e}")
 
+    def test_plan_topic_falls_back_to_topic_on_failure(self):
+        with patch('agents.get_llm', side_effect=RuntimeError("no llm")):
+            self.assertEqual(plan_topic("AI"), ["AI"])
+
+    def test_plan_topic_caps_and_cleans_questions(self):
+        plan = ResearchPlan(questions=["a", " ", "b", "c", "d", "e"])
+        with patch('agents.planner_prompt') as prompt:
+            prompt.__or__.return_value.invoke.return_value = plan
+            self.assertEqual(plan_topic("AI"), ["a", "b", "c", "d"])
+
     @patch('agents.get_llm')
     def test_writer_chain(self, mock_get_llm):
         from langchain_core.language_models import FakeListChatModel
@@ -57,17 +67,17 @@ class TestAgents(unittest.TestCase):
 
     @patch('agents.get_llm')
     def test_critic_chain(self, mock_get_llm):
-        from langchain_core.language_models import FakeListChatModel
-        # Mock the LLM to prevent actual API calls
-        fake_llm = FakeListChatModel(responses=["Mocked Response"])
+        review = CriticReview(score=6, strengths=["s"], improvements=["i"], verdict="v")
+        structured = MagicMock()
+        structured.invoke.return_value = review
+        fake_llm = MagicMock()
+        fake_llm.with_structured_output.return_value = structured
         mock_get_llm.return_value = fake_llm
 
-        inputs = {"report": "Mock research report."}
         try:
             critic_chain._chain = None  # reset to force re-init
-            result = critic_chain.invoke(inputs)
-            self.assertIsNotNone(result)
-            self.assertEqual(result, "Mocked Response")
+            result = critic_chain.invoke({"report": "Mock research report."})
+            fake_llm.with_structured_output.assert_called_once_with(CriticReview)
         except Exception as e:
             self.fail(f"critic_chain.invoke() failed with exception: {e}")
 

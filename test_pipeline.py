@@ -2,7 +2,8 @@ import unittest
 from unittest.mock import patch
 
 import pipeline
-from pipeline import _parse_score, research_pipeline
+from agents import CriticReview
+from pipeline import research_pipeline
 
 SOURCES = [
     {"title": "A", "url": "https://a.example", "snippet": "snippet a"},
@@ -18,21 +19,36 @@ def _fetch(url):
 
 class TestPipeline(unittest.TestCase):
     def _run(self, scores):
-        feedbacks = [f"Score: {s}/10\n\nStrengths:\n- x" for s in scores]
-        with patch("pipeline.search_sources", return_value=SOURCES), \
+        reviews = [CriticReview(score=s, strengths=["x"], improvements=["y"], verdict="v") for s in scores]
+        with patch("pipeline.plan_topic", return_value=["q1"]), \
+             patch("pipeline.search_sources", return_value=SOURCES), \
              patch("pipeline.fetch_text", side_effect=_fetch), \
              patch("pipeline.writer_chain") as writer, \
              patch("pipeline.revision_chain") as revision, \
              patch("pipeline.critic_chain") as critic:
             writer.invoke.return_value = "draft"
             revision.invoke.return_value = "revised"
-            critic.invoke.side_effect = feedbacks
+            critic.invoke.side_effect = reviews
             return research_pipeline("topic"), writer, revision, critic
 
-    def test_parse_score(self):
-        self.assertEqual(_parse_score("Score: 7.5/10"), 7.5)
-        self.assertEqual(_parse_score("Score: 9 / 10"), 9.0)
-        self.assertIsNone(_parse_score("no score here"))
+    def test_critic_failure_keeps_report(self):
+        with patch("pipeline.plan_topic", return_value=["q1"]), \
+             patch("pipeline.search_sources", return_value=SOURCES), \
+             patch("pipeline.fetch_text", return_value="text"), \
+             patch("pipeline.writer_chain") as writer, \
+             patch("pipeline.critic_chain") as critic:
+            writer.invoke.return_value = "draft"
+            critic.invoke.side_effect = RuntimeError("bad output")
+            state = research_pipeline("topic")
+        self.assertTrue(state["report"].startswith("draft"))
+        self.assertIsNone(state["score"])
+        self.assertEqual(state["revisions"], 0)
+
+    def test_critic_review_format(self):
+        review = CriticReview(score=7.5, strengths=["a"], improvements=["b"], verdict="ok")
+        self.assertIn("Score: 7.5/10", review.format())
+        with self.assertRaises(ValueError):
+            CriticReview(score=11, strengths=[], improvements=[], verdict="")
 
     def test_passing_report_is_not_revised(self):
         state, _, revision, _ = self._run([9])
@@ -61,6 +77,24 @@ class TestPipeline(unittest.TestCase):
         self.assertEqual([s["scraped"] for s in state["sources"]], [True, False])
         for key in ("search_results", "scraped_content", "report", "feedback"):
             self.assertIn(key, state)
+
+    def test_multi_question_search_dedupes_and_interleaves(self):
+        results = {
+            "q1": [{"title": "A", "url": "u1", "snippet": ""}, {"title": "B", "url": "u2", "snippet": ""}],
+            "q2": [{"title": "A", "url": "u1", "snippet": ""}, {"title": "C", "url": "u3", "snippet": ""}],
+        }
+        with patch("pipeline.search_sources", side_effect=lambda q, max_results: results[q]):
+            urls = [s["url"] for s in pipeline._search_all(["q1", "q2"])]
+        self.assertEqual(urls, ["u1", "u2", "u3"])
+
+    def test_failed_search_for_one_question_is_skipped(self):
+        def search(q, max_results):
+            if q == "bad":
+                raise RuntimeError("boom")
+            return [{"title": "A", "url": "u1", "snippet": ""}]
+
+        with patch("pipeline.search_sources", side_effect=search):
+            self.assertEqual(len(pipeline._search_all(["bad", "good"])), 1)
 
 
 if __name__ == "__main__":

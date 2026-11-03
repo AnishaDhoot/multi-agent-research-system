@@ -55,6 +55,21 @@ class TestSearchSources(unittest.TestCase):
                 tools.search_sources("q"), [{"title": "T", "url": "https://x", "snippet": "c"}]
             )
 
+    def test_search_retries_then_succeeds(self):
+        client = MagicMock()
+        client.search.side_effect = [RuntimeError("429"), {"results": []}]
+        with patch("tools._get_tavily", return_value=client), patch("tools.time.sleep"):
+            self.assertEqual(tools.search_sources("q"), [])
+        self.assertEqual(client.search.call_count, 2)
+
+    def test_search_gives_up_after_max_attempts(self):
+        client = MagicMock()
+        client.search.side_effect = RuntimeError("down")
+        with patch("tools._get_tavily", return_value=client), patch("tools.time.sleep"):
+            with self.assertRaises(RuntimeError):
+                tools.search_sources("q")
+        self.assertEqual(client.search.call_count, tools.SEARCH_ATTEMPTS)
+
 
 if __name__ == "__main__":
     unittest.main()
