@@ -22,7 +22,7 @@ class TestPipeline(unittest.TestCase):
         reviews = [CriticReview(score=s, strengths=["x"], improvements=["y"], verdict="v") for s in scores]
         with patch("pipeline.plan_topic", return_value=["q1"]), \
              patch("pipeline.search_sources", return_value=SOURCES), \
-             patch("pipeline.fetch_text", side_effect=_fetch), \
+             patch("pipeline.fetch_text_robust", side_effect=_fetch), \
              patch("pipeline.writer_chain") as writer, \
              patch("pipeline.revision_chain") as revision, \
              patch("pipeline.critic_chain") as critic:
@@ -34,7 +34,7 @@ class TestPipeline(unittest.TestCase):
     def test_critic_failure_keeps_report(self):
         with patch("pipeline.plan_topic", return_value=["q1"]), \
              patch("pipeline.search_sources", return_value=SOURCES), \
-             patch("pipeline.fetch_text", return_value="text"), \
+             patch("pipeline.fetch_text_robust", return_value="text"), \
              patch("pipeline.writer_chain") as writer, \
              patch("pipeline.critic_chain") as critic:
             writer.invoke.return_value = "draft"
@@ -95,6 +95,24 @@ class TestPipeline(unittest.TestCase):
 
         with patch("pipeline.search_sources", side_effect=search):
             self.assertEqual(len(pipeline._search_all(["bad", "good"])), 1)
+
+    def test_uncited_sources_are_dropped_and_citations_renumbered(self):
+        three = SOURCES + [{"title": "C", "url": "https://c.example", "snippet": "snippet c"}]
+        with patch("pipeline.plan_topic", return_value=["q1"]), \
+             patch("pipeline.search_sources", return_value=three), \
+             patch("pipeline.fetch_text_robust", return_value="text"), \
+             patch("pipeline.writer_chain") as writer, \
+             patch("pipeline.critic_chain") as critic:
+            writer.invoke.return_value = "Fact [1]. Another [1, 3]."
+            critic.invoke.return_value = CriticReview(score=9, strengths=[], improvements=[], verdict="v")
+            state = research_pipeline("topic")
+        self.assertIn("Fact [1]. Another [1, 2].", state["report"])
+        self.assertIn("[2] C - https://c.example", state["report"])
+        self.assertNotIn("b.example", state["report"])
+
+    def test_trust_ranking_prefers_authoritative_domains(self):
+        self.assertGreater(pipeline._trust("https://www.nih.gov/x"), pipeline._trust("https://shop.example.com"))
+        self.assertLess(pipeline._trust("https://medium.com/x"), 0)
 
 
 if __name__ == "__main__":

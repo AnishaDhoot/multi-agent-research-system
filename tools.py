@@ -8,11 +8,13 @@ import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from langchain_core.tools import tool
+import trafilatura
 from tavily import TavilyClient
+
+from settings import MAX_SCRAPE_CHARS
 
 load_dotenv()
 
-MAX_SCRAPE_CHARS = 3000
 MAX_REDIRECTS = 3
 SEARCH_ATTEMPTS = 3
 HEADERS = {
@@ -60,6 +62,17 @@ def is_safe_url(url: str) -> bool:
     return all(ipaddress.ip_address(info[4][0]).is_global for info in infos)
 
 
+def _extract_main_text(response: requests.Response) -> str:
+    """Main article text via trafilatura; falls back to plain tag-stripping for odd pages."""
+    text = trafilatura.extract(response.text, include_comments=False, include_tables=False)
+    if text:
+        return text
+    soup = BeautifulSoup(response.content, "html.parser")
+    for tag in soup(["script", "style", "nav", "footer"]):
+        tag.decompose()
+    return soup.get_text(separator=" ", strip=True)
+
+
 def fetch_text(url: str, limit: int = MAX_SCRAPE_CHARS) -> str:
     """Fetch a page and return its readable text. Raises on failure or unsafe URLs."""
     for _ in range(MAX_REDIRECTS + 1):
@@ -71,14 +84,34 @@ def fetch_text(url: str, limit: int = MAX_SCRAPE_CHARS) -> str:
             url = urljoin(url, response.headers.get("Location", ""))
             continue
         response.raise_for_status()
-        soup = BeautifulSoup(response.content, "html.parser")
-        for tag in soup(["script", "style", "nav", "footer"]):
-            tag.decompose()
-        text = soup.get_text(separator=" ", strip=True)[:limit]
+        text = _extract_main_text(response)[:limit]
         if not text.strip():
             raise ValueError("Page loaded but no readable content found.")
         return text
     raise ValueError("Too many redirects")
+
+
+def extract_via_tavily(url: str, limit: int = MAX_SCRAPE_CHARS) -> str:
+    """Ask Tavily to fetch the page. Works on many sites that block our own scraper."""
+    if not is_safe_url(url):
+        raise ValueError(f"Blocked or invalid URL: {url}")
+    result = _get_tavily().extract(urls=[url], extract_depth="advanced")
+    items = result.get("results") or []
+    text = (items[0].get("raw_content") or "")[:limit] if items else ""
+    if not text.strip():
+        raise ValueError("Tavily returned no content")
+    return text
+
+
+def fetch_text_robust(url: str, limit: int = MAX_SCRAPE_CHARS) -> str:
+    """Direct fetch first; Tavily Extract as a fallback. Raises the direct-fetch error if both fail."""
+    try:
+        return fetch_text(url, limit)
+    except Exception as direct_error:
+        try:
+            return extract_via_tavily(url, limit)
+        except Exception:
+            raise direct_error
 
 
 @tool
@@ -94,6 +127,6 @@ def web_search(query: str) -> str:
 def scrape_url(url: str) -> str:
     """Scrape and return clean text content from a given URL."""
     try:
-        return fetch_text(url)
+        return fetch_text_robust(url)
     except Exception as e:
         return f"Could not scrape URL (skipping): {e}"

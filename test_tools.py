@@ -46,6 +46,22 @@ class TestFetchText(unittest.TestCase):
         self.assertEqual(get.call_count, 1)
 
 
+class TestFetchTextRobust(unittest.TestCase):
+    def test_falls_back_to_tavily_extract_when_direct_fetch_fails(self):
+        with patch("tools.fetch_text", side_effect=ValueError("403")),              patch("tools.extract_via_tavily", return_value="extracted") as extract:
+            self.assertEqual(tools.fetch_text_robust("https://example.com"), "extracted")
+        extract.assert_called_once()
+
+    def test_raises_direct_error_when_both_fail(self):
+        with patch("tools.fetch_text", side_effect=ValueError("403")),              patch("tools.extract_via_tavily", side_effect=RuntimeError("tavily down")):
+            with self.assertRaisesRegex(ValueError, "403"):
+                tools.fetch_text_robust("https://example.com")
+
+    def test_extract_via_tavily_rejects_unsafe_urls(self):
+        with self.assertRaises(ValueError):
+            tools.extract_via_tavily("http://127.0.0.1/")
+
+
 class TestSearchSources(unittest.TestCase):
     def test_maps_tavily_results(self):
         client = MagicMock()

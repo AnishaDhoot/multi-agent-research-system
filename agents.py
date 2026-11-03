@@ -1,7 +1,5 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langgraph.prebuilt import create_react_agent
-from tools import web_search, scrape_url
 import os
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -11,18 +9,6 @@ def get_llm():
     from langchain_google_genai import ChatGoogleGenerativeAI
     # The client retries 429/5xx itself (HttpRetryOptions); a timeout stops a hung call blocking a run.
     return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, max_retries=3, timeout=90)
-
-def build_search_agent():
-    llm = get_llm()
-    # Create an agent using langgraph
-    agent = create_react_agent(llm, tools=[web_search], prompt="You are an expert search agent. Use the web_search tool to find the required information and summarize the URLs and snippets clearly.")
-    return agent
-
-def build_reader_agent():
-    llm = get_llm()
-    # Create an agent using langgraph
-    agent = create_react_agent(llm, tools=[scrape_url], prompt="You are an expert reader and scraper. Use the scrape_url tool based on the specific URL provided, and return the relevant content found within it.")
-    return agent
 
 writer_prompt = ChatPromptTemplate.from_messages([
     ("system", "You are an expert research writer. Write clear, structured and insightful reports."),

@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 # Import the methods to test
-from agents import CriticReview, ResearchPlan, plan_topic, get_llm, build_search_agent, build_reader_agent, writer_chain, critic_chain
+from agents import CriticReview, ResearchPlan, plan_topic, get_llm, writer_chain, critic_chain
 
 class TestAgents(unittest.TestCase):
     def setUp(self):
@@ -20,22 +20,6 @@ class TestAgents(unittest.TestCase):
             self.assertTrue(hasattr(llm, "invoke"))
         except Exception as e:
             self.fail(f"get_llm() failed with exception: {e}")
-
-    def test_build_search_agent(self):
-        try:
-            agent = build_search_agent()
-            self.assertIsNotNone(agent)
-            self.assertTrue(hasattr(agent, "invoke"))
-        except Exception as e:
-            self.fail(f"build_search_agent() failed with exception: {e}")
-
-    def test_build_reader_agent(self):
-        try:
-            agent = build_reader_agent()
-            self.assertIsNotNone(agent)
-            self.assertTrue(hasattr(agent, "invoke"))
-        except Exception as e:
-            self.fail(f"build_reader_agent() failed with exception: {e}")
 
     def test_plan_topic_falls_back_to_topic_on_failure(self):
         with patch('agents.get_llm', side_effect=RuntimeError("no llm")):
