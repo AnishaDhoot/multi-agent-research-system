@@ -35,6 +35,9 @@ def run_research(req: ResearchRequest):
             "scraped_content": state.get("scraped_content", ""),
             "report": state.get("report", ""),
             "feedback": state.get("feedback", ""),
+            "sources": state.get("sources", []),
+            "score": state.get("score"),
+            "revisions": state.get("revisions", 0),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

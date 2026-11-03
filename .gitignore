@@ -51,3 +51,6 @@ htmlcov/
 # Next.js
 aetheris-research-ui/aetheris-export/.next/
 aetheris-research-ui/aetheris-export/node_modules/
+
+.env*.local
+!.env.local.example

@@ -1,116 +1,3 @@
-# # from langchain.agents import create_react_agent, AgentExecutor
-# # from langchain import hub
-# # from langchain_openai import ChatOpenAI
-# # from langchain_core.prompts import ChatPromptTemplate
-# # from langchain_core.output_parsers import StrOutputParser
-# # from tools import web_search, scrape_url
-# # import os
-# # from dotenv import load_dotenv
-# # load_dotenv()
-
-# # # Lazily construct an LLM client so importing this module doesn't require
-# # # credentials or optional packages to be present.
-# # def get_llm():
-# #     try:
-       
-# #         from langchain_google_genai import ChatGoogleGenerativeAI
-# #         return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-# #     except Exception:
-# #         try:
-# #             return ChatOpenAI(temperature=0)
-# #         except Exception as e:
-# #             raise RuntimeError(
-# #                 "No LLM available: install langchain-groq or set OPENAI_API_KEY"
-# #             ) from e
-
-
-# # def build_search_agent():
-# #     prompt = hub.pull("hwchase17/react")
-# #     agent = create_react_agent(llm=get_llm(), tools=[web_search], prompt=prompt)
-# #     return AgentExecutor(agent=agent, tools=[web_search], verbose=True, handle_parsing_errors=True)
-
-# # def build_reader_agent():
-# #     prompt = hub.pull("hwchase17/react")
-# #     agent = create_react_agent(llm=get_llm(), tools=[scrape_url], prompt=prompt)
-# #     return AgentExecutor(agent=agent, tools=[scrape_url], verbose=True, handle_parsing_errors=True)
-
-# from langchain_core.prompts import ChatPromptTemplate
-# from langchain_core.output_parsers import StrOutputParser
-# # from tools import web_search, scrape_url
-# import os
-# from dotenv import load_dotenv
-# load_dotenv()
-
-# # def get_llm():
-# #     from langchain_google_genai import ChatGoogleGenerativeAI
-# #     return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-
-# # def build_search_agent():
-# #     llm = get_llm()
-# #     return llm.bind_tools([web_search])
-
-
-
-
-# #LCEL pipeline for writer chain
-# writer_prompt = ChatPromptTemplate.from_messages([
-#     ("system", "You are an expert research writer. Write clear, structured and insightful reports."),
-#     ("human", """Write a detailed research report on the topic below.
-#     Topic: {topic}
-#     Research Gathered:
-#     {research}
-#     Structure the report as:
-#     - Introduction
-#     - Key Findings (minimum 3 well-explained points)
-#     - Conclusion
-#     - Sources (list all URLs found in the research)
-#     Be detailed, factual and professional."""),
-# ])
-
-
-# class _LazyRunnable:
-#     def __init__(self, prompt_template):
-#         self.prompt_template = prompt_template
-#         self._chain = None
-
-#     def _init_chain(self):
-#         if self._chain is None:
-#             self._chain = self.prompt_template | get_llm() | StrOutputParser()
-
-#     def invoke(self, inputs: dict):
-#         self._init_chain()
-#         return self._chain.invoke(inputs)
-
-
-# writer_chain = _LazyRunnable(writer_prompt)
-
-# # critic_chain
-
-# critic_prompt = ChatPromptTemplate.from_messages([
-#     ("system", "You are a sharp and constructive research critic. Be honest and specific."),
-#     ("human", """Review the research report below and evaluate it strictly.
-#     Report:
-#         {report}
-
-#         Respond in this exact format:
-
-#         Score: X/10
-
-#         Strengths:
-#         - ...
-#         - ...
-
-#         Areas to Improve:
-#         - ...
-#         - ...
-
-#         One line verdict:
-#         ..."""),
-# ])
-
-# critic_chain = _LazyRunnable(critic_prompt)
-
-
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langgraph.prebuilt import create_react_agent
@@ -145,13 +32,31 @@ writer_prompt = ChatPromptTemplate.from_messages([
     - Introduction
     - Key Findings (minimum 3 well-explained points)
     - Conclusion
-    - Sources (list all URLs found in the research)
+    Cite the numbered sources inline like [1], [2]. Only state facts supported by
+    the research above. Do not write a Sources section; it is appended separately.
     Be detailed, factual and professional."""),
+])
+
+revision_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are an expert research writer revising a report based on editor feedback."),
+    ("human", """Revise the report below to address every point under "Areas to Improve".
+    Topic: {topic}
+    Research Gathered:
+    {research}
+    Current Report:
+    {report}
+    Critic Feedback:
+    {feedback}
+    Keep the same structure (Introduction, Key Findings, Conclusion), keep inline [n]
+    citations, and do not write a Sources section. Return only the revised report."""),
 ])
 
 critic_prompt = ChatPromptTemplate.from_messages([
     ("system", "You are a sharp and constructive research critic. Be honest and specific."),
     ("human", """Review the research report below and evaluate it strictly.
+    It is a synthesis of web sources, not original research: do not penalize the
+    absence of new experiments or a methodology section. Judge accuracy against its
+    citations, depth, clarity, balance, and whether claims are supported.
     Report:
         {report}
 
@@ -185,4 +90,5 @@ class _LazyRunnable:
         return self._chain.invoke(inputs)
 
 writer_chain = _LazyRunnable(writer_prompt)
+revision_chain = _LazyRunnable(revision_prompt)
 critic_chain = _LazyRunnable(critic_prompt)

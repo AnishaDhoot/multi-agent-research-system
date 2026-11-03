@@ -1,44 +1,17 @@
-# LangChain core
-langchain
-langchain-core
-langchain-community
-langchain-openai
+# LLM + agents
+langchain-core>=1.4,<2
+langchain-google-genai>=4.2,<5
+langgraph>=1.2,<2
 
-# LCEL / Runnables (included in langchain-core, but pinning for safety)
-langchain-core>=0.1.0
-
-# OpenAI
-openai
-
-# Google Gemini
-langchain-google-genai
-
-# ReAct Agent
-langgraph
+# Search + scraping
+tavily-python>=0.7,<1
+beautifulsoup4>=4.14,<5
+requests>=2.32,<3
 
 # API server
-fastapi
-uvicorn
-
-# Tavily search tool
-tavily-python
-langchain-tavily
-
-# BeautifulSoup for web scraping
-beautifulsoup4
-requests
-lxml
+fastapi>=0.139,<1
+uvicorn>=0.49,<1
+pydantic>=2.13,<3
 
 # Environment variable management
-python-dotenv
-
-# Async support
-asyncio
-
-# Optional but useful for structured outputs / pydantic models
-pydantic
-
-# Logging / tracing (LangSmith)
-langsmith
-
-rich
+python-dotenv>=1.2,<2

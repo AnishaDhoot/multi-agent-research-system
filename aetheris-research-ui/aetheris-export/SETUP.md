@@ -2,7 +2,7 @@
 
 ## 1. Python Backend
 
-Place `server.py` next to your `pipeline.py`, `agents.py`, `tools.py` files.
+`server.py` lives in the repo root next to your `pipeline.py`, `agents.py`, `tools.py` files.
 
 ```bash
 pip install fastapi uvicorn

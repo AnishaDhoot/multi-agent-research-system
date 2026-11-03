@@ -1,114 +1,90 @@
-# from agents import build_reader_agent, build_search_agent,writer_chain , critic_chain
+import logging
+import re
+from concurrent.futures import ThreadPoolExecutor
 
-# def research_pipeline(topic:str)->dict:
-#     state={}
+from agents import critic_chain, revision_chain, writer_chain
+from tools import fetch_text, search_sources
 
-#     #search agent working
-#     print("\n" +"="*50 )
+logger = logging.getLogger(__name__)
 
-#     search_agent = build_search_agent()
-#     search_result = search_agent.invoke({
-#         "messages" : [("user", f"Find recent, reliable and detailed information about: {topic}")]
-#     })
-#     state["search_results"] = search_result['messages'][-1].content
-
-#     print("\n search result ",state['search_results'])
-
-#     #reader agent working
-#     print("\n"+" ="*50)
-  
-
-#     reader_agent = build_reader_agent()
-#     reader_result = reader_agent.invoke({
-#         "messages": [("user",
-#             f"Based on the following search results about '{topic}', "
-#             f"pick the most relevant URL and scrape it for deeper content.\n\n"
-#             f"Search Results:\n{state['search_results'][:800]}"
-#         )]
-#     })
-
-#     state['scraped_content'] = reader_result['messages'][-1].content
-
-#     print("\nscraped content: \n", state['scraped_content'])
-
-#     #writer chain
-#     print("\n"+" ="*50)
-    
-
-#     research_combined = (
-#         f"SEARCH RESULTS : \n {state['search_results']} \n\n"
-#         f"DETAILED SCRAPED CONTENT : \n {state['scraped_content']}"
-#     )
-
-#     state["report"] = writer_chain.invoke({
-#         "topic" : topic,
-#         "research" : research_combined
-#     })
-
-#     print("\n Final Report\n",state['report'])
-
-#     #critic chain
-#     print("\n"+" ="*50)
-    
-
-#     state["feedback"] = critic_chain.invoke({
-#         "report":state['report']
-#     })
-
-#     print("\n critic report \n", state['feedback'])
-
-#     return state
+MAX_SOURCES = 5
+MAX_REVISIONS = 2
+PASS_SCORE = 8.0
 
 
+def _gather_sources(topic: str) -> list[dict]:
+    """Search, then scrape every result in parallel. Falls back to the snippet when a page can't be read."""
+    sources = search_sources(topic, max_results=MAX_SOURCES)
 
-# if __name__ == "__main__":
-#     topic = input("\n Enter a research topic : ")
-#     research_pipeline(topic)
+    def scrape(source: dict) -> dict:
+        try:
+            return {**source, "text": fetch_text(source["url"]), "scraped": True}
+        except Exception as e:
+            logger.warning("Could not scrape %s: %s", source["url"], e)
+            return {**source, "text": source["snippet"], "scraped": False}
 
-from agents import build_search_agent, build_reader_agent, writer_chain, critic_chain
+    if not sources:
+        return []
+    with ThreadPoolExecutor(max_workers=len(sources)) as pool:
+        return list(pool.map(scrape, sources))
 
 
-def _content_to_str(content) -> str:
-    if isinstance(content, list):
-        return "".join(
-            block.get("text", "") for block in content if isinstance(block, dict)
-        )
-    return str(content)
+def _format_search_results(sources: list[dict]) -> str:
+    return "\n\n".join(
+        f"[{i}] {s['title']}\nURL: {s['url']}\nSnippet: {s['snippet'][:300]}"
+        for i, s in enumerate(sources, 1)
+    )
+
+
+def _format_research(sources: list[dict]) -> str:
+    return "\n\n".join(
+        f"[{i}] {s['title']} ({s['url']})\n{s['text']}" for i, s in enumerate(sources, 1)
+    )
+
+
+def _format_source_list(sources: list[dict]) -> str:
+    return "\n".join(f"[{i}] {s['title']} - {s['url']}" for i, s in enumerate(sources, 1))
+
+
+def _parse_score(feedback: str) -> float | None:
+    match = re.search(r"Score:\s*(\d+(?:\.\d+)?)\s*/\s*10", feedback)
+    return float(match.group(1)) if match else None
 
 
 def research_pipeline(topic: str) -> dict:
-    state = {}
+    sources = _gather_sources(topic)
+    research = _format_research(sources) or "No sources were found."
 
-    # Search
-    search_agent = build_search_agent()
-    # langgraph create_react_agent uses "messages"
-    search_result = search_agent.invoke(
-        {"messages": [("user", f"Find recent, reliable and detailed information about: {topic}")]}
-    )
-    state["search_results"] = _content_to_str(search_result["messages"][-1].content)
+    state = {
+        "sources": [{"title": s["title"], "url": s["url"], "scraped": s["scraped"]} for s in sources],
+        "search_results": _format_search_results(sources),
+        "scraped_content": "\n\n".join(s["text"] for s in sources if s["scraped"]),
+    }
 
-    # Reader
-    reader_agent = build_reader_agent()
-    reader_result = reader_agent.invoke(
-        {"messages": [("user", f"Scrape the most relevant URL from these search results about '{topic}':\n\n{state['search_results'][:800]}")]}
-    )
-    state["scraped_content"] = _content_to_str(reader_result["messages"][-1].content)
+    # The Sources list is appended by code, so the critic is shown it alongside the body.
+    source_section = f"\n\n## Sources\n{_format_source_list(sources)}" if sources else ""
 
-    # Writer
-    research_combined = (
-        f"SEARCH RESULTS:\n{state['search_results']}\n\n"
-        f"SCRAPED CONTENT:\n{state['scraped_content']}"
-    )
-    state["report"] = writer_chain.invoke({
-        "topic": topic,
-        "research": research_combined
-    })
+    report = writer_chain.invoke({"topic": topic, "research": research})
+    feedback = critic_chain.invoke({"report": report.rstrip() + source_section})
+    revisions = 0
 
-    # Critic
-    state["feedback"] = critic_chain.invoke({"report": state["report"]})
+    # Critic loop: revise until the score passes or the budget runs out.
+    while revisions < MAX_REVISIONS:
+        score = _parse_score(feedback)
+        if score is None or score >= PASS_SCORE:
+            break
+        report = revision_chain.invoke(
+            {"topic": topic, "research": research, "report": report, "feedback": feedback}
+        )
+        feedback = critic_chain.invoke({"report": report.rstrip() + source_section})
+        revisions += 1
 
+    state.update(report=report.rstrip() + source_section, feedback=feedback, score=_parse_score(feedback), revisions=revisions)
     return state
 
+
 if __name__ == "__main__":
-    topic = input("Enter a research topic: ")
-    research_pipeline(topic)
+    logging.basicConfig(level=logging.INFO)
+    result = research_pipeline(input("Enter a research topic: "))
+    print(result["report"])
+    print("\n--- Critic ---\n", result["feedback"])
