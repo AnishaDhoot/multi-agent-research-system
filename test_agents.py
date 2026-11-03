@@ -2,6 +2,7 @@ import os
 import unittest
 from unittest.mock import MagicMock, patch
 
+import agents
 # Import the methods to test
 from agents import CriticReview, ResearchPlan, plan_topic, get_llm, writer_chain, critic_chain
 
@@ -20,6 +21,23 @@ class TestAgents(unittest.TestCase):
             self.assertTrue(hasattr(llm, "invoke"))
         except Exception as e:
             self.fail(f"get_llm() failed with exception: {e}")
+
+    def test_get_llm_selects_provider(self):
+        with patch.dict(os.environ, {"GROQ_API_KEY": "test-key"}):
+            with patch('agents.LLM_PROVIDER', 'groq'), patch('agents.LLM_MODEL', None):
+                llm = get_llm()
+        self.assertEqual(type(llm).__name__, "ChatGroq")
+        self.assertEqual(llm.model_name, "openai/gpt-oss-120b")
+        with patch('agents.LLM_PROVIDER', 'nope'):
+            with self.assertRaises(ValueError):
+                get_llm()
+
+    def test_groq_uses_json_schema_structured_output(self):
+        fake_llm = MagicMock()
+        with patch('agents.get_llm', return_value=fake_llm):
+            with patch('agents.LLM_PROVIDER', 'groq'):
+                agents.structured_llm(CriticReview)
+            fake_llm.with_structured_output.assert_called_once_with(CriticReview, method="json_schema")
 
     def test_plan_topic_falls_back_to_topic_on_failure(self):
         with patch('agents.get_llm', side_effect=RuntimeError("no llm")):

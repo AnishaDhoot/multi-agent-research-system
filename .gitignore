@@ -54,3 +54,4 @@ aetheris-research-ui/aetheris-export/node_modules/
 
 .env*.local
 !.env.local.example
+*.tsbuildinfo

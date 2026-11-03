@@ -1,317 +1,144 @@
 # Multi-Agent Research System
 
-A sophisticated AI-powered research automation system that leverages multiple specialized agents to conduct comprehensive web research, synthesize findings, and generate detailed reports with built-in quality assessment.
+Give it a topic and it plans searches, reads several web sources, writes a cited report, and has a critic score and (if needed) revise it. Built with LangChain, Tavily and Gemini or Groq, with a FastAPI backend and a Next.js UI.
 
-## 🎯 Overview
-
-This system implements a multi-agent architecture where each AI agent has a specific role in the research process:
-- **Search Agent**: Discovers relevant information using web search
-- **Reader Agent**: Deep-dives into content by scraping and analyzing specific URLs
-- **Writer Agent**: Synthesizes research into structured, professional reports
-- **Critic Agent**: Evaluates report quality and provides constructive feedback
-
-The system is built with modern AI frameworks including LangChain, LangGraph, and Google Gemini, complemented by a sleek Next.js frontend for interactive research sessions.
-
-## ✨ Features
-
-- **Automated Research Pipeline**: End-to-end research automation from topic to final report
-- **Multi-Agent Architecture**: Specialized agents for different research tasks
-- **Real-time Web Search**: Integration with Tavily for up-to-date information retrieval
-- **Intelligent Content Scraping**: BeautifulSoup-based web scraping with content cleaning
-- **Quality Assessment**: Built-in critic agent for report evaluation
-- **Modern Web Interface**: Next.js frontend with React and Tailwind CSS
-- **RESTful API**: FastAPI backend for seamless integration
-- **Comprehensive Testing**: Unit tests for agents and pipeline components
-- **Lazy Loading**: Efficient LLM initialization to optimize resource usage
-
-## 🏗️ Architecture
-
-### Research Pipeline Flow
+## How it works
 
 ```
-User Topic → Search Agent → Reader Agent → Writer Agent → Critic Agent → Final Report
-                ↓               ↓              ↓              ↓
-          Web Search    URL Scraping    Report Synthesis  Quality Check
+topic
+  │
+  ▼
+Planner ──► 3–4 focused search queries
+  │
+  ▼
+Search & Reader ──► Tavily search (parallel) ─► rank by source quality ─► dedupe
+  │                 read up to 6 pages in parallel
+  │                 (trafilatura; Tavily Extract fallback for blocked sites)
+  ▼
+Writer ──► report with inline [n] citations
+  │
+  ▼
+Critic ──► structured review: score 0–10, strengths, improvements
+  │            score < 8 ─► Writer revises using the feedback (max 2 times)
+  ▼
+Final report + Sources list (only sources the report actually cites)
 ```
 
-### Component Overview
+| Stage | Where | What it does |
+|---|---|---|
+| Planner | `agents.plan_topic` | Structured LLM output → sub-questions; falls back to the raw topic if planning fails |
+| Search & Reader | `pipeline.py`, `tools.py` | Parallel Tavily searches, domain-based ranking, parallel page reads, snippet fallback |
+| Writer / Revision | `agents.writer_chain`, `agents.revision_chain` | Cited report; revision prompt addresses critic feedback |
+| Critic | `agents.critic_chain` | Returns a `CriticReview` (bounded score + lists) via structured output |
 
-**Backend (Python)**
-- `agents.py`: Defines all AI agents and chains using LangGraph and LangChain
-- `pipeline.py`: Orchestrates the research workflow
-- `tools.py`: Implements web search and URL scraping tools
-- `server.py`: FastAPI server for API endpoints
+Search and reading are plain code, not LLM agents: that is faster, cheaper and predictable. Only planning, writing, revising and critiquing call the LLM.
 
-**Frontend (Next.js)**
-- React-based UI for interactive research
-- Real-time progress tracking
-- Beautiful, modern interface with animations
+## Setup
 
-## 🛠️ Tech Stack
+Requires Python 3.12+ and Node 20+.
 
-### Backend
-- **LangChain**: AI framework for building LLM applications
-- **LangGraph**: Agent orchestration and workflow management
-- **Google Gemini**: Primary LLM (gemini-2.5-flash)
-- **Tavily**: Web search API
-- **FastAPI**: Modern Python web framework
-- **BeautifulSoup4**: Web scraping and HTML parsing
-- **Pydantic**: Data validation and settings management
-
-### Frontend
-- **Next.js 16**: React framework with server components
-- **React 19**: UI library
-- **TypeScript**: Type-safe JavaScript
-- **Tailwind CSS 4**: Utility-first CSS framework
-- **Framer Motion**: Animation library
-- **Lucide React**: Icon library
-
-## 📦 Installation
-
-### Prerequisites
-- Python 3.8+
-- Node.js 18+
-- Google Gemini API key
-- Tavily API key
-
-### Backend Setup
-
-1. **Clone the repository**
-```bash
-git clone https://github.com/AnishaDhoot/multi-agent-research-system.git
-cd multi-agent-research-system
-```
-
-2. **Create virtual environment**
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-```
-
-3. **Install dependencies**
-```bash
+.venv\Scripts\activate          # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env            # then fill in GOOGLE_API_KEY and TAVILY_API_KEY
 ```
 
-4. **Configure environment variables**
-Create a `.env` file in the root directory:
-```env
-GOOGLE_API_KEY=your_google_gemini_api_key
-TAVILY_API_KEY=your_tavily_api_key
-```
+API keys: [Tavily](https://tavily.com) plus one LLM provider: [Google AI Studio](https://aistudio.google.com/apikey) (Gemini) or [Groq](https://console.groq.com). Choose with `LLM_PROVIDER` in `.env`. One report makes 3–6 LLM calls, and free tiers have daily limits, so if you hit a quota, switch provider rather than enabling billing. Free-tier limits and available models change; if a model is rejected, set `LLM_MODEL`.
 
-### Frontend Setup
+## Run it
 
-1. **Navigate to the frontend directory**
-```bash
-cd aetheris-research-ui/aetheris-export
-```
-
-2. **Install dependencies**
-```bash
-npm install
-```
-
-3. **Configure environment**
-```bash
-cp .env.local.example .env.local
-```
-
-Edit `.env.local` if needed (default backend URL is `http://localhost:8000`):
-```env
-PYTHON_BACKEND_URL=http://localhost:8000
-```
-
-## 🚀 Usage
-
-### Running the Backend
-
-Start the FastAPI server:
-```bash
-uvicorn server:app --reload --port 8000
-```
-
-The API will be available at `http://localhost:8000`
-
-### Running the Frontend
-
-Start the Next.js development server:
-```bash
-cd aetheris-research-ui/aetheris-export
-npm run dev
-```
-
-The UI will be available at `http://localhost:3000`
-
-### Command Line Usage
-
-You can also run the research pipeline directly from the command line:
+**Command line**
 
 ```bash
 python pipeline.py
 ```
 
-Enter a research topic when prompted, and the system will:
-1. Search for relevant information
-2. Scrape the most relevant URL
-3. Generate a comprehensive report
-4. Provide quality assessment
+**Backend + UI**
 
-### API Endpoints
-
-#### Health Check
-```http
-GET /health
-```
-
-#### Research Request
-```http
-POST /research
-Content-Type: application/json
-
-{
-  "topic": "artificial intelligence in healthcare"
-}
-```
-
-**Response:**
-```json
-{
-  "search_results": "...",
-  "scraped_content": "...",
-  "report": "...",
-  "feedback": "..."
-}
-```
-
-## 📁 Project Structure
-
-```
-multi-agent-research-system/
-├── agents.py              # AI agent definitions and chains
-├── pipeline.py            # Research workflow orchestration
-├── tools.py               # Web search and scraping tools
-├── server.py              # FastAPI server
-├── requirements.txt       # Python dependencies
-├── test_agents.py         # Agent unit tests
-├── test_pipeline.py       # Pipeline integration tests
-├── .env                   # Environment variables (not tracked)
-├── .gitignore             # Git ignore rules
-└── aetheris-research-ui/  # Next.js frontend
-    └── aetheris-export/
-        ├── app/           # Next.js app directory
-        ├── package.json   # Node.js dependencies
-        ├── .env.local     # Frontend environment variables
-        └── SETUP.md       # Frontend setup guide
-```
-
-## 🧪 Testing
-
-### Run all tests
 ```bash
-python -m unittest test_agents.py test_pipeline.py
+uvicorn server:app --port 8000
 ```
 
-### Run specific test files
 ```bash
-python -m unittest test_agents.py
-python -m unittest test_pipeline.py
+cd aetheris-research-ui/aetheris-export
+npm install
+cp .env.local.example .env.local
+npm run dev                     # http://localhost:3000
 ```
 
-### Test Coverage
-- `test_agents.py`: Tests LLM initialization, agent building, and chain execution
-- `test_pipeline.py`: Tests the complete research pipeline with mocked agents
+Set `DEMO_MODE=true` in the UI's `.env.local` to try the interface with sample data and no backend.
 
-## 🔧 Configuration
+## API
 
-### Environment Variables
+| Endpoint | Description |
+|---|---|
+| `GET /health` | `{"status": "ok"}` |
+| `POST /jobs` | Body `{"topic": "..."}` → `202 {"job_id": "..."}`. Starts a run in the background. |
+| `GET /jobs/{job_id}` | `{"status": "running"\|"done"\|"error", "stage": "...", "result": {...}}`. Stages: `queued`, `planning`, `reading sources`, `writing`, `reviewing`, `revising`. |
+| `POST /research` | Blocking version of `/jobs`; returns the result directly. |
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GOOGLE_API_KEY` | Yes | Google Gemini API key for LLM |
-| `TAVILY_API_KEY` | Yes | Tavily API key for web search |
-| `PYTHON_BACKEND_URL` | No | Backend URL (default: `http://localhost:8000`) |
+Result fields: `report`, `feedback`, `score`, `revisions`, `plan` (search queries), `sources` (`title`, `url`, `scraped`), `search_results`, `scraped_content`.
 
-### Agent Configuration
+Errors: `400` empty or too-long topic, `429` rate limit, `503` server busy, `500` run failed (details are logged server-side, not returned).
 
-You can modify agent behavior in `agents.py`:
-- **LLM Model**: Change `gemini-2.5-flash` to other supported models
-- **Temperature**: Adjust creativity (0 = more deterministic, 1 = more creative)
-- **Prompts**: Customize system prompts for each agent
+Jobs are kept in memory for an hour and the rate limit is per process, so run a single worker.
 
-### Tool Configuration
+## Configuration
 
-Modify search and scraping behavior in `tools.py`:
-- **Max Results**: Adjust `max_results` in web_search
-- **Content Length**: Change text truncation limits in scrape_url
-- **Timeout**: Adjust request timeout for web scraping
+Everything is optional except the two API keys. Set in `.env` (see `.env.example`):
 
-## 🎨 Frontend Features
+| Variable | Default | Meaning |
+|---|---|---|
+| `LLM_PROVIDER` | `gemini` | `gemini` or `groq` |
+| `LLM_MODEL` | provider default | Overrides the model (`gemini-2.5-flash` / `openai/gpt-oss-120b`) |
+| `GOOGLE_API_KEY` | — | Needed when `LLM_PROVIDER=gemini` |
+| `GROQ_API_KEY` | — | Needed when `LLM_PROVIDER=groq` |
+| `TAVILY_API_KEY` | — | Search and Extract |
+| `MAX_SOURCES` | 6 | Pages read per report |
+| `RESULTS_PER_QUESTION` | 3 | Tavily results per planned query |
+| `MAX_REVISIONS` | 2 | Writer revisions after critic review |
+| `PASS_SCORE` | 8.0 | Critic score that ends the revision loop |
+| `MAX_SCRAPE_CHARS` | 6000 | Text kept per page |
+| `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
+| `MAX_TOPIC_CHARS` | 300 | Longest accepted topic |
+| `RATE_LIMIT_PER_MINUTE` | 5 | Requests per IP per minute |
+| `MAX_CONCURRENT_RUNS` | 2 | Simultaneous research runs |
 
-- **Interactive Research Interface**: Clean, modern UI for entering research topics
-- **Real-time Progress**: Visual feedback during research pipeline execution
-- **Report Display**: Formatted presentation of research findings
-- **Quality Metrics**: Display of critic agent evaluation
-- **Responsive Design**: Works on desktop and mobile devices
-- **Dark Mode**: Modern dark theme with smooth animations
+## Project structure
 
-## 🔍 How It Works
+```
+agents.py        LLM provider selection, prompts, planner, writer, revision and critic chains
+pipeline.py      Orchestration: plan → gather → write → review/revise → cite
+tools.py         Tavily search/extract, safe page fetching, text extraction
+settings.py      Environment-based configuration
+server.py        FastAPI app: jobs, rate limit, concurrency cap, CORS
+test_*.py        Unit tests (everything external is mocked)
+aetheris-research-ui/aetheris-export/   Next.js UI (polls /jobs through /api/research)
+.github/workflows/ci.yml                Runs the tests on every push
+```
 
-### 1. Search Agent
-Uses Tavily's search API to find recent, reliable information about the research topic. Returns titles, URLs, and content snippets from the most relevant sources.
+## Security notes
 
-### 2. Reader Agent
-Analyzes search results, selects the most relevant URL, and scrapes the content using BeautifulSoup. Removes scripts, styles, and navigation elements for clean text extraction.
+- Pages are fetched only over http(s) from hosts that resolve to public IP addresses, and every redirect hop is re-checked, so the scraper can't be pointed at localhost or cloud metadata addresses. Known gap: the hostname is resolved once to check and again to connect, so a hostile DNS server could still rebind between the two.
+- The UI escapes the report before rendering it as HTML, since it is built from scraped web content.
+- API keys live in `.env` / `.env.local`, which are git-ignored.
 
-### 3. Writer Agent
-Synthesizes search results and scraped content into a structured research report with:
-- Introduction
-- Key Findings (minimum 3 well-explained points)
-- Conclusion
-- Sources
+## Tests
 
-### 4. Critic Agent
-Evaluates the generated report and provides:
-- Quality score (X/10)
-- Strengths
-- Areas to improve
-- One-line verdict
+```bash
+python -m unittest -v
+```
 
-## 🤝 Contributing
+The tests mock the LLM, Tavily and HTTP, so they need no keys or network. A change to a prompt or output format is only caught by a real run (`python pipeline.py`).
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+## Known limitations
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-<!-- 
-## 📝 License
+- Reports are only as good as what Tavily finds and the pages allow; paywalled sites fall back to Tavily Extract or the search snippet.
+- The critic is an LLM, so scores are a rough signal, not a measurement.
+- There is no fact-checking agent yet: citations are checked for use, not for accuracy.
+- Job state and rate limits are in memory (single process, lost on restart).
 
-This project is open source and available under the MIT License. -->
+## Contributing
 
-## 🙏 Acknowledgments
-
-- **LangChain**: For the excellent AI framework
-- **LangGraph**: For agent orchestration capabilities
-- **Google**: For Gemini AI model
-- **Tavily**: For web search API
-- **Next.js**: For the React framework
-
-## 📧 Contact
-
-For questions or suggestions, please open an issue on GitHub or contact the maintainers.
-
-<!-- ## 🗺️ Roadmap
-
-- [ ] Add more specialized agents (citation manager, fact-checker)
-- [ ] Implement research history and saved reports
-- [ ] Add export options (PDF, Markdown)
-- [ ] Support for multiple LLM providers
-- [ ] Advanced filtering and source selection
-- [ ] Collaborative research features
-- [ ] API rate limiting and authentication
-- [ ] Docker containerization for easy deployment -->
-
-
+Fork, create a branch, make your change with tests, and open a pull request.

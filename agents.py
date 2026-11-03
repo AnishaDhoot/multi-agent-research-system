@@ -1,14 +1,32 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-import os
 from pydantic import BaseModel, Field
-from dotenv import load_dotenv
-load_dotenv()
+from settings import LLM_MODEL, LLM_PROVIDER
+
+DEFAULT_MODELS = {"gemini": "gemini-2.5-flash", "groq": "openai/gpt-oss-120b"}
+
 
 def get_llm():
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    # The client retries 429/5xx itself (HttpRetryOptions); a timeout stops a hung call blocking a run.
-    return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, max_retries=3, timeout=90)
+    """Chat model for the provider chosen by LLM_PROVIDER (gemini or groq); LLM_MODEL overrides the default."""
+    provider = LLM_PROVIDER
+    model = LLM_MODEL or DEFAULT_MODELS.get(provider)
+    if provider == "gemini":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        # The client retries 429/5xx itself (HttpRetryOptions); a timeout stops a hung call blocking a run.
+        return ChatGoogleGenerativeAI(model=model, temperature=0, max_retries=3, timeout=90)
+    if provider == "groq":
+        from langchain_groq import ChatGroq
+        return ChatGroq(model=model, temperature=0, max_retries=3, timeout=90)
+    raise ValueError(f"Unknown LLM_PROVIDER {provider!r}; use 'gemini' or 'groq'")
+
+
+def structured_llm(schema):
+    """get_llm() constrained to return `schema`. Groq models only support JSON-schema mode reliably."""
+    llm = get_llm()
+    if LLM_PROVIDER == "groq":
+        return llm.with_structured_output(schema, method="json_schema")
+    return llm.with_structured_output(schema)
+
 
 writer_prompt = ChatPromptTemplate.from_messages([
     ("system", "You are an expert research writer. Write clear, structured and insightful reports."),
@@ -81,7 +99,7 @@ planner_prompt = ChatPromptTemplate.from_messages([
 def plan_topic(topic: str) -> list[str]:
     """Return sub-questions for the topic. Falls back to the topic itself if planning fails."""
     try:
-        plan = (planner_prompt | get_llm().with_structured_output(ResearchPlan)).invoke({"topic": topic})
+        plan = (planner_prompt | structured_llm(ResearchPlan)).invoke({"topic": topic})
         questions = [q.strip() for q in plan.questions if q.strip()]
     except Exception:
         questions = []
@@ -97,7 +115,7 @@ class _LazyRunnable:
     def _init_chain(self):
         if self._chain is None:
             if self.schema:
-                self._chain = self.prompt_template | get_llm().with_structured_output(self.schema)
+                self._chain = self.prompt_template | structured_llm(self.schema)
             else:
                 self._chain = self.prompt_template | get_llm() | StrOutputParser()
 

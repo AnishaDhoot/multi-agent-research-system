@@ -6,16 +6,36 @@ type ResearchState = {
   scraped_content: string;
   report: string;
   feedback: string;
+  plan?: string[];
+  sources?: { title: string; url: string; scraped: boolean }[];
+  score?: number | null;
+  revisions?: number;
 };
 
-type Phase = "idle" | "searching" | "reading" | "writing" | "critiquing" | "done" | "error";
+type Phase = "idle" | "planning" | "reading" | "writing" | "critiquing" | "done" | "error";
 
 const PHASES: { key: Phase; label: string; icon: string; desc: string }[] = [
-  { key: "searching", label: "Web Search Agent", icon: "◎", desc: "Scanning the web for reliable intelligence" },
-  { key: "reading",   label: "Reader Agent",    icon: "◈", desc: "Scraping & parsing the top source" },
-  { key: "writing",   label: "Writer Chain",    icon: "◆", desc: "Synthesizing a structured research report" },
-  { key: "critiquing",label: "Critic Chain",    icon: "◇", desc: "Evaluating quality and accuracy" },
+  { key: "planning",  label: "Planner",         icon: "◎", desc: "Breaking the topic into focused search queries" },
+  { key: "reading",   label: "Search & Reader", icon: "◈", desc: "Searching and reading several sources in parallel" },
+  { key: "writing",   label: "Writer",          icon: "◆", desc: "Synthesizing a cited research report" },
+  { key: "critiquing",label: "Critic",          icon: "◇", desc: "Scoring the report and requesting revisions" },
 ];
+
+// Backend job stages -> UI phases
+const STAGE_TO_PHASE: Record<string, Phase> = {
+  queued: "planning",
+  planning: "planning",
+  "reading sources": "reading",
+  writing: "writing",
+  reviewing: "critiquing",
+  revising: "critiquing",
+};
+
+const POLL_INTERVAL_MS = 2000;
+
+function escapeHtml(text: string) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
 
 export default function Home() {
   const [topic, setTopic]         = useState("");
@@ -25,7 +45,6 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<"report" | "search" | "scraped" | "feedback">("report");
   const inputRef = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
-  const [phaseIndex, setPhaseIndex] = useState(0);
   const [dots, setDots] = useState("");
 
   // animated dots
@@ -35,59 +54,63 @@ export default function Home() {
     return () => clearInterval(i);
   }, [phase]);
 
-  // simulate phase progression while waiting
-  useEffect(() => {
-    if (phase === "idle" || phase === "done" || phase === "error") { setPhaseIndex(0); return; }
-    const phases: Phase[] = ["searching","reading","writing","critiquing"];
-    const idx = phases.indexOf(phase);
-    if (idx >= 0) setPhaseIndex(idx);
-  }, [phase]);
+  // index of the stage currently running (0 when nothing is running)
+  const phaseIndex = Math.max(0, PHASES.findIndex(p => p.key === phase));
 
   async function handleSubmit() {
     if (!topic.trim() || phase !== "idle") return;
     setError("");
     setResult(null);
-    setPhase("searching");
-
-    // Phase simulation timing
-    const timings: [number, Phase][] = [[0,"searching"],[3500,"reading"],[8000,"writing"],[14000,"critiquing"]];
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    timings.forEach(([ms, p]) => {
-      timers.push(setTimeout(() => setPhase(p), ms));
-    });
+    setPhase("planning");
 
     try {
-      const res = await fetch("/api/research", {
+      // Start a background job, then poll it so the progress cards reflect the real stage.
+      const start = await fetch("/api/research", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ topic }),
       });
-      timers.forEach(t => clearTimeout(t));
-      if (!res.ok) {
-        const e = await res.json();
-        setError(e.error || "Unknown error");
+      if (!start.ok) {
+        const e = await start.json().catch(() => ({}));
+        setError(e.error || "Could not start research");
         setPhase("error");
         return;
       }
-      const data: ResearchState = await res.json();
-      setResult(data);
-      setPhase("done");
-      setActiveTab("report");
-      setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+      const { job_id } = await start.json();
+
+      while (true) {
+        await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+        const res = await fetch(`/api/research/${encodeURIComponent(job_id)}`, { cache: "no-store" });
+        if (!res.ok) {
+          const e = await res.json().catch(() => ({}));
+          setError(e.error || "Lost contact with the research job");
+          setPhase("error");
+          return;
+        }
+        const job = await res.json();
+        if (job.status === "done") {
+          setResult(job.result as ResearchState);
+          setPhase("done");
+          setActiveTab("report");
+          setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+          return;
+        }
+        if (job.status === "error") {
+          setError(job.error || "Research failed");
+          setPhase("error");
+          return;
+        }
+        setPhase(STAGE_TO_PHASE[job.stage] ?? "planning");
+      }
     } catch (e: unknown) {
-      timers.forEach(t => clearTimeout(t));
       setError(e instanceof Error ? e.message : "Network error");
       setPhase("error");
     }
   }
 
-  function parseScore(feedback: string) {
-    const m = feedback.match(/Score:\s*(\d+)\/10/);
-    return m ? parseInt(m[1]) : null;
-  }
-
   function formatReport(report: string) {
-    return report
+    // Escape first: the report is LLM output built from scraped web pages and is injected as HTML below.
+    return escapeHtml(report)
       .replace(/^# (.+)$/gm, '<h1 class="rpt-h1">$1</h1>')
       .replace(/^## (.+)$/gm, '<h2 class="rpt-h2">$1</h2>')
       .replace(/^### (.+)$/gm, '<h3 class="rpt-h3">$1</h3>')
@@ -103,7 +126,7 @@ export default function Home() {
   }
 
   const isRunning = phase !== "idle" && phase !== "done" && phase !== "error";
-  const score = result ? parseScore(result.feedback) : null;
+  const score = result?.score ?? null;
 
   return (
     <>
@@ -189,7 +212,7 @@ export default function Home() {
             fontSize:17,color:"var(--text-secondary)",maxWidth:520,margin:"0 auto 48px",
             lineHeight:1.7,fontWeight:300
           }}>
-            Four AI agents work in concert — searching, reading, writing, and critiquing — to produce structured research reports in seconds.
+            A planner, reader, writer and critic work together — planning searches, reading several sources, writing a cited report and revising it until it passes review.
           </p>
 
           {/* ── INPUT BOX ── */}
@@ -259,7 +282,6 @@ export default function Home() {
             {PHASES.map((p, i) => {
               const isDone = phase === "done" || phaseIndex > i;
               const isActive = isRunning && phaseIndex === i;
-              const isPending = !isDone && !isActive && phase !== "idle";
 
               return (
                 <div key={p.key} style={{
@@ -341,10 +363,11 @@ export default function Home() {
           <section ref={resultRef} style={{maxWidth:900,margin:"0 auto",padding:"0 2rem 120px"}}>
 
             {/* Stats row */}
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:24}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:24}}>
               {[
-                { label:"Report Sections", value: (result.report.match(/^##/gm)||[]).length, unit:"" },
-                { label:"Sources Found", value: (result.search_results.match(/URL:/g)||[]).length, unit:"" },
+                { label:"Search Queries", value: result.plan?.length ?? null, unit:"" },
+                { label:"Sources Used", value: result.sources?.length ?? (result.search_results.match(/URL:/g)||[]).length, unit:"" },
+                { label:"Revisions", value: result.revisions ?? null, unit:"" },
                 { label:"Critic Score", value: score, unit:"/10" },
               ].map(s => (
                 <div key={s.label} style={{
@@ -382,7 +405,7 @@ export default function Home() {
                   fontSize:13,transition:"all 0.15s",letterSpacing:"0.01em",
                   borderBottom: activeTab===t ? "2px solid var(--accent)" : "2px solid transparent"
                 }}>
-                  {t === "report" ? "📄 Report" : t === "feedback" ? "⭐ Critique" : t === "search" ? "🔍 Search Results" : "📌 Scraped Content"}
+                  {t === "report" ? "📄 Report" : t === "feedback" ? "⭐ Critique" : t === "search" ? "🔍 Sources" : "📌 Scraped Content"}
                 </button>
               ))}
             </div>
@@ -438,6 +461,16 @@ export default function Home() {
               )}
               {activeTab === "search" && (
                 <div style={{padding:"32px 40px"}}>
+                  {result.plan && result.plan.length > 0 && (
+                    <div style={{marginBottom:24}}>
+                      <div style={{fontFamily:"var(--font-mono)",fontSize:11,color:"var(--text-muted)",letterSpacing:"0.08em",marginBottom:8}}>
+                        SEARCH QUERIES PLANNED
+                      </div>
+                      <ul style={{margin:0,paddingLeft:18,color:"var(--text-secondary)",fontSize:13,lineHeight:1.8}}>
+                        {result.plan.map(q => <li key={q}>{q}</li>)}
+                      </ul>
+                    </div>
+                  )}
                   <pre style={{
                     fontFamily:"var(--font-mono)",fontSize:12,lineHeight:1.8,
                     color:"var(--text-secondary)",whiteSpace:"pre-wrap",wordBreak:"break-word"
@@ -485,10 +518,10 @@ export default function Home() {
 
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
               {[
-                { icon:"◎", title:"Web Search Agent", color:"#7c6dfa", body:"Powered by Tavily, the search agent queries the web for the 5 most reliable, recent results on your topic — returning titles, URLs, and key snippets." },
-                { icon:"◈", title:"Reader Agent", color:"#2dd4bf", body:"The reader agent picks the most relevant URL from search results and scrapes it deeply using BeautifulSoup, extracting up to 3,000 characters of clean text content." },
-                { icon:"◆", title:"Writer Chain (LCEL)", color:"#f5c842", body:"An LLM writer chain synthesizes the combined search + scraped content into a structured report: Introduction, Key Findings (3+ points), Conclusion, and Sources." },
-                { icon:"◇", title:"Critic Chain", color:"#ff6b6b", body:"A separate LLM critic chain reviews the finished report, scoring it out of 10, listing strengths and areas for improvement, then delivering a one-line verdict." },
+                { icon:"◎", title:"Planner", color:"#7c6dfa", body:"Breaks your topic into 3–4 focused search queries so the research covers fundamentals, recent developments, challenges and data — not just one angle." },
+                { icon:"◈", title:"Search & Reader", color:"#2dd4bf", body:"Runs the queries through Tavily, ranks results by source quality, then reads up to 6 pages in parallel — falling back to Tavily Extract for sites that block scrapers." },
+                { icon:"◆", title:"Writer", color:"#f5c842", body:"Synthesizes the sources into a structured report with inline [n] citations. Only sources the report actually cites appear in the final Sources list." },
+                { icon:"◇", title:"Critic", color:"#ff6b6b", body:"Scores the report out of 10 with strengths and improvements. Below 8, the writer revises using the feedback — up to two times." },
               ].map(card => (
                 <div key={card.title} style={{
                   borderRadius:14,padding:"28px 28px",
@@ -518,9 +551,9 @@ export default function Home() {
                   Backend Setup Required
                 </div>
                 <p style={{fontSize:12,color:"var(--text-muted)",lineHeight:1.7}}>
-                  This UI connects to your Python pipeline via <code style={{fontFamily:"var(--font-mono)",background:"rgba(255,255,255,0.06)",padding:"1px 6px",borderRadius:4,fontSize:11}}>POST /api/research</code> → <code style={{fontFamily:"var(--font-mono)",background:"rgba(255,255,255,0.06)",padding:"1px 6px",borderRadius:4,fontSize:11}}>http://localhost:8000/research</code>.
-                  Run your FastAPI/Flask server and set <code style={{fontFamily:"var(--font-mono)",background:"rgba(255,255,255,0.06)",padding:"1px 6px",borderRadius:4,fontSize:11}}>PYTHON_BACKEND_URL</code> in <code style={{fontFamily:"var(--font-mono)",background:"rgba(255,255,255,0.06)",padding:"1px 6px",borderRadius:4,fontSize:11}}>.env.local</code>.
-                  Without the backend, the UI runs with demo data.
+                  This UI starts a job on your Python backend via <code style={{fontFamily:"var(--font-mono)",background:"rgba(255,255,255,0.06)",padding:"1px 6px",borderRadius:4,fontSize:11}}>POST /api/research</code> and polls it until the report is ready.
+                  Run <code style={{fontFamily:"var(--font-mono)",background:"rgba(255,255,255,0.06)",padding:"1px 6px",borderRadius:4,fontSize:11}}>uvicorn server:app --port 8000</code> and set <code style={{fontFamily:"var(--font-mono)",background:"rgba(255,255,255,0.06)",padding:"1px 6px",borderRadius:4,fontSize:11}}>PYTHON_BACKEND_URL</code> in <code style={{fontFamily:"var(--font-mono)",background:"rgba(255,255,255,0.06)",padding:"1px 6px",borderRadius:4,fontSize:11}}>.env.local</code>.
+                  Set <code style={{fontFamily:"var(--font-mono)",background:"rgba(255,255,255,0.06)",padding:"1px 6px",borderRadius:4,fontSize:11}}>DEMO_MODE=true</code> to try the UI with sample data.
                 </p>
               </div>
             </div>

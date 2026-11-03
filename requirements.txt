@@ -1,6 +1,7 @@
 # LLM + agents
 langchain-core>=1.4,<2
 langchain-google-genai>=4.2,<5
+langchain-groq>=1.0,<2
 
 # Search + scraping
 tavily-python>=0.7,<1

@@ -19,6 +19,10 @@ def _float(name: str, default: float) -> float:
         return default
 
 
+# LLM: "gemini" (GOOGLE_API_KEY) or "groq" (GROQ_API_KEY); LLM_MODEL overrides the provider's default model
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
+LLM_MODEL = os.getenv("LLM_MODEL", "").strip() or None
+
 # Pipeline
 MAX_SOURCES = _int("MAX_SOURCES", 6)
 RESULTS_PER_QUESTION = _int("RESULTS_PER_QUESTION", 3)
